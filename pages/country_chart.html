@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+</head>
+<script type="text/javascript" src="https://code.jquery.com/jquery-1.7.1.min.js"></script>
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="https://d3js.org/queue.v1.min.js"></script>
+<script src="https://d3js.org/topojson.v1.min.js"></script>
+<script src="../scripts/d3-tip.js"></script>
+
+<body>
+<svg width="1500" height="500" class="cumulative_cases"></svg>
+<svg width="1500" height="500" class="vaccination"></svg>
+<svg width="1500" height="500" class="mutations_amount"></svg>
+
+<script>
+    const queryString = window.location.search;
+    const urlParams = new URLSearchParams(queryString);
+    const slug = urlParams.get('slug')
+    const root_url = "https://api.covid19api.com/total/country/"
+
+    var country_country_code_map = {}; // global
+    d3.json("../data/country_code_json.json", function (data) {
+        //any other functions that depend on data
+        data.forEach(function (d) {
+            // console.log(d.Slug)
+            country_country_code_map[d.Slug] = d.Country
+        })
+    });
+
+    console.log(root_url + slug)
+    var svg = d3.select("svg.cumulative_cases"),
+        margin = 200,
+        width = svg.attr("width") - margin,
+        height = svg.attr("height") - margin
+
+    svg.append("text")
+        .attr("transform", "translate(100,0)")
+        .attr("x", 50)
+        .attr("y", 50)
+        .attr("font-size", "24px")
+        .text(slug + " Covid cumulative cases ")
+    var cfr_svg = d3.select("svg.vaccination")
+    cfr_svg.append("text")
+        .attr("transform", "translate(100,0)")
+        .attr("x", 50)
+        .attr("y", 50)
+        .attr("font-size", "24px")
+        .text(slug + " Case Fatality Rate ");
+
+    var svg_amount = d3.select("svg.mutations_amount")
+    svg_amount.append("text")
+        .attr("transform", "translate(100,0)")
+        .attr("x", 50)
+        .attr("y", 50)
+        .attr("font-size", "24px")
+        .text(slug + " new found mutations");
+
+
+    var xScale = d3.scaleBand().range([0, width]).padding(0.4),
+        yScale = d3.scaleLinear().range([height, 0]);
+
+    var xScale_death = d3.scaleBand().range([0, width]).padding(0.4),
+        yScale_death = d3.scaleLinear().range([height, 0]);
+
+    var mutation_xScale = d3.scaleBand().range([0, width]).padding(0.4),
+        mutation_yScale = d3.scaleLinear().range([height, 0]);
+    var mutation_g = svg_amount.append("g")
+        .attr("transform", "translate(" + 100 + "," + 100 + ")");
+
+    var g = svg.append("g")
+        .attr("transform", "translate(" + 100 + "," + 100 + ")");
+
+    var death_g = cfr_svg.append("g")
+        .attr("transform", "translate(" + 100 + "," + 100 + ")");
+
+    d3.json("../data/country.json", function (error, data){
+        console.log(data)
+        let country_name = country_country_code_map[slug]
+        console.log(country_name)
+        data = data[country_name]
+        mutation_xScale.domain(data.map(function (d) {
+            return d.date;
+        }));
+        mutation_yScale.domain([0, 10]);
+        mutation_g.append("g")
+            .attr("transform", "translate(0," + height + ")")
+            .call(d3.axisBottom(mutation_xScale).tickFormat(function (d) {
+                if (d.slice(8,10) === "01")
+                    return d.slice(2,7)
+                // return d
+            }))
+            .append("text")
+            .attr("y", 1000)
+            .attr("x", 1000)
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Date");
+        mutation_g.append("g")
+            .call(d3.axisLeft(mutation_yScale).tickFormat(function (d) {
+                return  d;
+            }).ticks(10))
+            .append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", 6)
+            .attr("dy", "-5.1em")
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Amount");
+        mutation_g.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", function (d) {
+                return mutation_xScale(d.date);
+            })
+            .attr("y", function (d) {
+                return mutation_yScale(d.value);
+            })
+            .attr("width", mutation_xScale.bandwidth())
+            .attr("height", function (d) {
+                return height - mutation_yScale(d.value);
+            });
+    })
+
+    d3.json(root_url + slug, function (error, data) {
+        // data = data.slice(Math.max(data.length - 500, 0))
+        if (error) {
+            throw error;
+        }
+        console.log(data)
+        xScale.domain(data.map(function (d) {
+            return d.Date;
+        }));
+        yScale.domain([0, d3.max(data, function (d) {
+            return d.Confirmed;
+        })]);
+        xScale_death.domain(data.map(function (d) {
+            return d.Date;
+        }));
+        yScale_death.domain([0, d3.max(data, function (d) {
+            return d.Deaths / (d.Confirmed + 1);
+        })]);
+
+        death_g.append("g")
+            .attr("transform", "translate(0," + height + ")")
+            .call(d3.axisBottom(xScale).tickFormat(function (d) {
+                if (d.slice(8,10) === "01")
+                    return d.slice(0,7)
+            }))
+            .append("text")
+            .attr("y", height - 250)
+            .attr("x", width - 100)
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Date");
+
+        death_g.append("g")
+            .call(d3.axisLeft(yScale_death).tickFormat(function (d) {
+                return  d;
+            }).ticks(10))
+            .append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", 6)
+            .attr("dy", "-5.1em")
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("CFR");
+
+        death_g.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", function (d) {
+                return xScale(d.Date);
+            })
+            .attr("y", function (d) {
+
+                return yScale_death( d.Deaths / (d.Confirmed + 1));
+            })
+            .attr("width", xScale.bandwidth())
+            .attr("height", function (d) {
+                return height - yScale_death( d.Deaths / (d.Confirmed + 1));
+            });
+
+
+        g.append("g")
+            .attr("transform", "translate(0," + height + ")")
+            .call(d3.axisBottom(xScale).tickFormat(function (d) {
+                if (d.slice(8,10) === "01")
+                    return d.slice(0,7)
+            }))
+            .append("text")
+            .attr("y", height - 250)
+            .attr("x", width - 100)
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Date");
+
+        g.append("g")
+            .call(d3.axisLeft(yScale).tickFormat(function (d) {
+                return  d;
+            }).ticks(10))
+            .append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", 6)
+            .attr("dy", "-5.1em")
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Cases");
+
+        g.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", function (d) {
+                return xScale(d.Date);
+            })
+            .attr("y", function (d) {
+                return yScale(d.Confirmed);
+            })
+            .attr("width", xScale.bandwidth())
+            .attr("height", function (d) {
+                return height - yScale(d.Confirmed);
+            });
+    });
+
+</script>
+
+<script>
+</script>
+</body>
+</html>

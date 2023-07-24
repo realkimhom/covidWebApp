@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+
+    .names {
+        fill: none;
+        stroke: #fff;
+        stroke-linejoin: round;
+    }
+
+    /* Tooltip CSS */
+    .d3-tip {
+        line-height: 1.5;
+        font-weight: 400;
+        font-family: "avenir next", Arial, sans-serif;
+        padding: 6px;
+        background: rgba(0, 0, 0, 0.6);
+        color: #FFA500;
+        border-radius: 1px;
+        pointer-events: none;
+    }
+
+    /* Creates a small triangle extender for the tooltip */
+    .d3-tip:after {
+        box-sizing: border-box;
+        display: inline;
+        font-size: 8px;
+        width: 100%;
+        line-height: 1.5;
+        color: rgba(0, 0, 0, 0.6);
+        position: absolute;
+        pointer-events: none;
+
+    }
+
+    /* Northward tooltips */
+    .d3-tip.n:after {
+        content: "\25BC";
+        margin: -1px 0 0 0;
+        top: 100%;
+        left: 0;
+        text-align: center;
+    }
+
+    /* Eastward tooltips */
+    .d3-tip.e:after {
+        content: "\25C0";
+        margin: -4px 0 0 0;
+        top: 50%;
+        left: -8px;
+    }
+
+    /* Southward tooltips */
+    .d3-tip.s:after {
+        content: "\25B2";
+        margin: 0 0 1px 0;
+        top: -8px;
+        left: 0;
+        text-align: center;
+    }
+
+    /* Westward tooltips */
+    .d3-tip.w:after {
+        content: "\25B6";
+        margin: -4px 0 0 -1px;
+        top: 50%;
+        left: 100%;
+    }
+
+    /*    text{
+          pointer-events:none;
+        }*/
+
+    .details {
+        color: white;
+    }
+
+    .choose {
+        float: left
+    }
+
+
+</style>
+
+<script type="text/javascript" src="https://code.jquery.com/jquery-1.7.1.min.js"></script>
+<script src="https://d3js.org/d3.v4.min.js"></script>
+<script src="https://d3js.org/queue.v1.min.js"></script>
+<script src="https://d3js.org/topojson.v1.min.js"></script>
+<script src="../scripts/d3-tip.js"></script>
+<body>
+<div class="choose">
+    <label for="scales">Choose a scales:</label>
+
+    <select name="scales" id="scales">
+        <option value="population">population</option>
+        <option value="new confirmed">new confirmed</option>
+        <option value="total confirmed">total confirmed</option>
+        <option value="total confirmed / new population">total confirmed / new population</option>
+        <option value="Mutant Count"> Mutant Count</option>
+    </select></div>
+<script>
+    var country_country_code_map = {}; // global
+    d3.json("../data/country_code_json.json", function (data) {
+        //any other functions that depend on data
+        data.forEach(function (d) {
+            // console.log(d.Slug)
+            country_country_code_map[d.Country] = d.Slug
+        })
+    });
+
+    var format = d3.format(",");
+
+    // Set tooltips
+    var tip = d3.tip()
+        .attr('class', 'd3-tip')
+        .offset([200, -100])
+        .html(function (d) {
+            return "<strong>Country: </strong><span class='details'>" + d.properties.name + "<br></span>" +
+                "<strong>Population: </strong><span class='details'>" + format(d.population) + "<br></span>" +
+                "<strong>Total Confirmed: </strong><span class='details'>" + format(d.totalconfirmed) + "<br></span>" +
+                "<strong>New Confirmed: </strong><span class='details'>" + format(d.newconfirmed) + "<br></span>" +
+                "<strong>Case Ratio: </strong><span class='details'>" + format(((d.totalconfirmed * 100 /
+                    d.population).toPrecision(4))) + "%<br></span>" +
+                "<strong>Mutant Count: </strong><span class='details'>" + format(d.mutant_count) + "<br></span>";
+
+        })
+
+    var margin = {top: 0, right: 0, bottom: 0, left: 0},
+        width = 960 - margin.left - margin.right,
+        height = 500 - margin.top - margin.bottom;
+
+    var color = d3.scaleThreshold()
+        .domain([10000, 100000, 500000, 1000000, 5000000, 10000000, 50000000, 100000000, 500000000, 1500000000])
+        .range(["rgb(247,251,255)", "rgb(222,235,247)", "rgb(198,219,239)", "rgb(158,202,225)", "rgb(107,174,214)", "rgb(66,146,198)", "rgb(33,113,181)", "rgb(8,81,156)", "rgb(8,48,107)", "rgb(3,19,43)"]);
+
+    var path = d3.geoPath();
+
+    var svg = d3.select("body")
+        .append("svg")
+        .attr("width", width)
+        .attr("height", height)
+        .append('g')
+        .attr('class', 'map');
+
+    var projection = d3.geoMercator()
+        .scale(130)
+        .translate([width / 2, height / 1.5]);
+
+    var path = d3.geoPath().projection(projection);
+
+    svg.call(tip);
+    queue()
+        .defer(d3.json, "../assets/world_countries_with_code.json")
+        .defer(d3.tsv, "../assets/world_population.tsv")
+        .defer(d3.json, "https://api.covid19api.com/summary")
+        .defer(d3.tsv, "../assets/mutant_per_country.tsv")
+        .await(map_initialisation);
+    var populationById = {};
+    var TotalConfirmed = {};
+    var NewConfirmed = {};
+    var MutantPerCountry = {}
+    var out_data;
+
+    function data_initialise(error, data, population, covid_data, mutant_data) {
+        out_data = data;
+        population.forEach(function (d) {
+            populationById[d.id] = +d.population;
+        });
+        covid_data.Countries.forEach(function (d) {
+            NewConfirmed[d.CountryCode] = d.NewConfirmed;
+            TotalConfirmed[d.CountryCode] = d.TotalConfirmed;
+        })
+        mutant_data.forEach(function (d) {
+            MutantPerCountry[d.CountryCode] = d.mutant_count;
+        });
+        data.forEach(function (d) {
+            d.population = populationById[d.id]
+            d.newconfirmed = NewConfirmed[d.CountryCode]
+            d.totalconfirmed = TotalConfirmed[d.CountryCode]
+            d.mutant_count = MutantPerCountry[d.CountryCode]
+        });
+    }
+
+    function map_initialisation(error, data, population, covid_data, mutant_data) {
+        data_initialise(error, data, population, covid_data, mutant_data);
+        svg.append("g")
+            .attr("class", "countries")
+            .selectAll("path")
+            .data(out_data)
+            .enter().append("path")
+            .attr("class", function (d) {
+                return d.CountryCode
+            })
+            .attr("d", path)
+            .style("fill", function (d) {
+                return color(populationById[d.id]);
+            })
+            .style('stroke', 'white')
+            .style('stroke-width', 1.5)
+            .style("opacity", 0.8)
+            // tooltips
+            .style("stroke", "white")
+            .style('stroke-width', 0.3)
+            .style("float", "left")
+            .on('mouseover', function (d) {
+                tip.show(d);
+
+                d3.select(this)
+                    .style("opacity", 1)
+                    .style("stroke", "white")
+                    .style("stroke-width", 3);
+            })
+            .on('mouseout', function (d) {
+                tip.hide(d);
+
+                d3.select(this)
+                    .style("opacity", 0.8)
+                    .style("stroke", "white")
+                    .style("stroke-width", 0.3);
+            })
+            .on("click", function (d) {
+                let slug = country_country_code_map[d.properties.name]
+                console.log(slug)
+                window.location.href = '/assignment2/pages/country_chart.html?slug='+slug;
+            });
+    }
+
+    $("#scales").change(function () {
+            self = $(this);
+            // d3.select("g").remove();
+            svg.select("g")
+                .selectAll("path")
+                .data(out_data)
+                .style("fill", function (d) {
+                    if (self.val() === "new confirmed") {
+                        return color(NewConfirmed[d.CountryCode] * 100);
+                    } else if (self.val() === "total confirmed") {
+                        return color(TotalConfirmed[d.CountryCode]);
+                    } else if (self.val() === "population") {
+                        return color(populationById[d.id]);
+                    } else if (self.val() === "total confirmed / new population")
+                        return color(TotalConfirmed[d.CountryCode] * 1e+8 / populationById[d.id])
+                    else
+                        return color(MutantPerCountry[d.CountryCode] * 1e+4)
+                })
+                .style('stroke', 'white')
+                .style('stroke-width', 1.5)
+                .style("opacity", 0.8)
+                // tooltips
+                .style("stroke", "white")
+                .style('stroke-width', 0.3)
+        }
+    );
+</script>
+<script>
+
+    var margin = {top: 0, right: 0, bottom: 0, left: 0},
+        width = 960 - margin.left - margin.right,
+        height = 500 - margin.top - margin.bottom;
+
+    var svg_mutant = d3.select("body")
+        .append("svg")
+        .attr("width", 2000)
+        .attr("height", 800)
+        .append('g')
+        .attr("class", 'mutant')
+
+    svg_mutant.append("text")
+        .attr("transform", "translate(100,0)")
+        .attr("x", 50)
+        .attr("y", 50)
+        .attr("font-size", "24px")
+        .text(" Global new cases ")
+
+    var xScale = d3.scaleBand().range([0, width]).padding(0.4),
+        yScale = d3.scaleLinear().range([height, 0]);
+    var g = svg_mutant.append("g")
+        .attr("transform", "translate(" + 100 + "," + 100 + ")");
+    d3.csv("../data/global_cumulative_cases.csv", function (error, data){
+        xScale.domain(data.map(function (d) {
+            return d.date;
+        }));
+        yScale.domain([0, 20000000]);
+        g.append("g")
+            .attr("transform", "translate(0," + height + ")")
+            .call(d3.axisBottom(xScale).tickFormat(function (d) {
+                if (d.slice(8,10) === "01")
+                    return d.slice(2,7)
+                    // return d
+            }))
+            .append("text")
+            .attr("y", 1000)
+            .attr("x", 1000)
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Date");
+
+        g.append("g")
+            .call(d3.axisLeft(yScale).tickFormat(function (d) {
+                    return  d;
+            }).ticks(10))
+            .append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", 6)
+            .attr("dy", "-5.1em")
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Cases");
+
+        g.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", function (d) {
+                return xScale(d.date);
+            })
+            .attr("y", function (d) {
+                return yScale(d.new_cases);
+            })
+            .attr("width", xScale.bandwidth())
+            .attr("height", function (d) {
+                return height - yScale(d.new_cases);
+            });
+    });
+
+    var svg_rate = d3.select("body")
+        .append("svg")
+        .attr("width", 2000)
+        .attr("height", 800)
+        .append('g')
+        .attr("class", 'rate')
+
+    svg_rate.append("text")
+        .attr("transform", "translate(100,0)")
+        .attr("x", 50)
+        .attr("y", 50)
+        .attr("font-size", "24px")
+        .text(" Morality rate ")
+
+    var rate_xScale = d3.scaleBand().range([0, width]).padding(0.4),
+        rate_yScale = d3.scaleLinear().range([height, 0]);
+    var rate_g = svg_rate.append("g")
+        .attr("transform", "translate(" + 100 + "," + 100 + ")");
+    d3.csv("../data/global_cumulative_cases.csv", function (error, data){
+        rate_xScale.domain(data.map(function (d) {
+            return d.date;
+        }));
+        rate_yScale.domain([0, 1]);
+        rate_g.append("g")
+            .attr("transform", "translate(0," + height + ")")
+            .call(d3.axisBottom(rate_xScale).tickFormat(function (d) {
+                if (d.slice(8,10) === "01")
+                    return d.slice(2,7)
+                // return d
+            }))
+            .append("text")
+            .attr("y", 1000)
+            .attr("x", 1000)
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Date");
+
+        rate_g.append("g")
+            .call(d3.axisLeft(rate_yScale).tickFormat(function (d) {
+                return  d;
+            }).ticks(10))
+            .append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", 6)
+            .attr("dy", "-5.1em")
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Ratio");
+
+        rate_g.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", function (d) {
+                return rate_xScale(d.date);
+            })
+            .attr("y", function (d) {
+                return rate_yScale(d.new_morality_rate);
+            })
+            .attr("width", rate_xScale.bandwidth())
+            .attr("height", function (d) {
+                return height - rate_yScale(d.new_morality_rate);
+            });
+    });
+
+    var svg_md = d3.select("body")
+        .append("svg")
+        .attr("width", 2000)
+        .attr("height", 800)
+        .append('g')
+        .attr("class", 'rate')
+
+    svg_md.append("text")
+        .attr("transform", "translate(100,0)")
+        .attr("x", 50)
+        .attr("y", 50)
+        .attr("font-size", "24px")
+        .text(" New Mutation Amount ")
+
+    var md_xScale = d3.scaleBand().range([0, width]).padding(0.4),
+        md_yScale = d3.scaleLinear().range([height, 0]);
+    var md_g = svg_md.append("g")
+        .attr("transform", "translate(" + 100 + "," + 100 + ")");
+    d3.csv("../data/all_kinds_mutant.csv", function (error, data){
+        md_xScale.domain(data.map(function (d) {
+            return d.date;
+        }));
+        md_yScale.domain([0, 80]);
+        md_g.append("g")
+            .attr("transform", "translate(0," + height + ")")
+            .call(d3.axisBottom(md_xScale).tickFormat(function (d) {
+                const dates = d.split('/');
+                if (dates[2] == "1")
+                    return dates[0].slice(2,4)+"/"+dates[1]
+
+
+                // return d
+            }))
+            .append("text")
+            .attr("y", 1000)
+            .attr("x", 1000)
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Date");
+
+        md_g.append("g")
+            .call(d3.axisLeft(md_yScale).tickFormat(function (d) {
+                return  d;
+            }).ticks(10))
+            .append("text")
+            .attr("transform", "rotate(-90)")
+            .attr("y", 6)
+            .attr("dy", "-5.1em")
+            .attr("text-anchor", "end")
+            .attr("stroke", "black")
+            .text("Ratio");
+
+        md_g.selectAll(".bar")
+            .data(data)
+            .enter().append("rect")
+            .attr("class", "bar")
+            .attr("x", function (d) {
+                return md_xScale(d.date);
+            })
+            .attr("y", function (d) {
+                return md_yScale(d.value);
+            })
+            .attr("width", md_xScale.bandwidth())
+            .attr("height", function (d) {
+                return height - md_yScale(d.value);
+            });
+    });
+
+</script>
+<script>
+    const treeData = {
+        "name": "Covid",
+        "value": 15,
+        "type": "black",
+        "level": "yellow",
+        "children": [
+            {
+                "name": "19",
+                "value": 5,
+                "type": "grey",
+                "level": "red",
+                "children":[
+                    {
+                        "name": "19A",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "19B",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    }
+                ]
+            },
+            {
+                "name": "20",
+                "value": 5,
+                "type": "grey",
+                "level": "red",
+                "children": [
+                    {
+                        "name": "20A",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20B",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20C",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20D",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20E (EU1)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20F",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20G",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20H (Beta, V2)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20I (Alpha, V1)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "20J (Gamma, V3)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                ]
+            },
+            {
+                "name": "21",
+                "value": 5,
+                "type": "grey",
+                "level": "red",
+                "children": [
+                    {
+                        "name": "21A (Delta)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21B (Kappa)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21C (Epsilon)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21D (Eta)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21F (Iota)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21G (Lambda)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21I (Delta)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21J (Delta)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+                    {
+                        "name": "21M (Omicron)",
+                        "value": 5,
+                        "type": "grey",
+                        "level": "red",
+                    },
+
+
+
+                ]
+            }
+        ]
+    };
+
+    var svg_hierarchy = d3.select("body")
+        .append("svg")
+        .attr("width", 1000000)
+        .attr("height", height)
+        .attr("group", "translate(30,0)")
+        .append('g')
+        .attr("class", 'hierarchy')
+
+    svg_hierarchy.append("text")
+        .attr("transform", "translate(100,0)")
+        .attr("x", 50)
+        .attr("y", 50)
+        .attr("font-size", "24px")
+        .text(" Mutant Development ")
+    const treemap = d3.tree().size([height, width]);
+    let nodes = d3.hierarchy(treeData, d => d.children);
+    nodes = treemap(nodes);
+
+    const node = svg_hierarchy.selectAll(".node")
+        .data(nodes.descendants())
+        .enter().append("g")
+        .attr("class", d => "node" + (d.children ? " node--internal"
+            : " node--leaf"))
+        .attr("transform", d => "translate(" + d.y + "," +
+            d.x + ")");
+
+    const link = svg_hierarchy.selectAll(".link")
+        .data(nodes.descendants().slice(1))
+        .enter().append("path")
+        .attr("class", "link")
+        // .style("stroke", d => d.data.level)
+        .attr("d", d => {
+            return "M" + d.y + "," + d.x
+                + "C" + (d.y + d.parent.y) / 2 + "," + d.x
+                + " " + (d.y + d.parent.y) / 2 + "," + d.parent.x
+                + " " + d.parent.y + "," + d.parent.x;
+        });
+
+    node.append("circle")
+        .attr("r", d => d.data.value)
+        // .style("stroke", d => d.data.type)
+        // .style("fill", d => d.data.level);
+    node.append("text")
+        .attr("dy", ".35em")
+        .attr("x", d => d.children ? (d.data.value + 5) * -1 :
+            d.data.value + 5)
+        .attr("y", d => d.children && d.depth !== 0 ?
+            -(d.data.value + 5) : d)
+        .style("text-anchor", d => d.children ? "end" : "start")
+        .text(d => d.data.name)
+        .on("click", function (d){
+                console.log(d.data.name)
+                let clade = d.data.name;
+                window.location.href = '../pages/clade_chart.html?clade='+clade;
+
+        })
+</script>
+
+</body>
+</html>
